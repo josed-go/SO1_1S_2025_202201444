@@ -19,6 +19,9 @@
 #include <linux/cpumask.h>
 #include <linux/cpu.h>
 #include <linux/kernel_stat.h>
+#include <linux/uaccess.h> // Para mm_segment_t, get_fs, set_fs
+#include <linux/cgroup.h>  // Para cgroup, task_cgroup, etc.
+#include <linux/fs.h>      // Para filp_open, filp_close, etc.
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Jose Gongora");
@@ -78,6 +81,92 @@ static void get_container_cmd(struct task_struct *task, char *cmd, int len) {
     }
 }
 
+static char* get_cgroup_path(struct task_struct *task) {
+    struct cgroup *cgrp;
+    char *path;
+
+    rcu_read_lock();
+    cgrp = task_cgroup(task, cpu_cgrp_id);
+    if (!cgrp || !cgrp->kn) {
+        rcu_read_unlock();
+        return NULL;
+    }
+
+    path = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!path) {
+        rcu_read_unlock();
+        return NULL;
+    }
+
+    strncpy(path, "/sys/fs/cgroup", PATH_MAX - 1);
+    path[PATH_MAX - 1] = '\0';
+
+    if (!kernfs_path(cgrp->kn, path + strlen("/sys/fs/cgroup"), PATH_MAX - strlen("/sys/fs/cgroup"))) {
+        kfree(path);
+        rcu_read_unlock();
+        return NULL;
+    }
+
+    rcu_read_unlock();
+    return path;
+}
+
+static unsigned long get_task_memory_usage(struct task_struct *task) {
+    char *cgroup_path;
+    char *mem_file_path;  // Cambiamos a un puntero en lugar de un array estático
+    struct file *filp = NULL;
+    char buffer[32];  // Esto es pequeño, lo dejamos como está
+    unsigned long memory_usage = 0;
+    loff_t pos = 0;
+    ssize_t ret;
+
+    // Obtener el cgroup path
+    cgroup_path = get_cgroup_path(task);
+    if (!cgroup_path) {
+        printk(KERN_ERR "Failed to get cgroup path\n");
+        return 0;
+    }
+
+    // Asignar memoria dinámicamente para mem_file_path
+    mem_file_path = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!mem_file_path) {
+        kfree(cgroup_path);
+        printk(KERN_ERR "Failed to allocate memory for mem_file_path\n");
+        return 0;
+    }
+
+    // Construir el path al archivo memory.current
+    snprintf(mem_file_path, PATH_MAX, "%s/memory.current", cgroup_path);
+    kfree(cgroup_path);  // Liberamos cgroup_path ya que no lo necesitamos más
+
+    // Abrir el archivo memory.current
+    filp = filp_open(mem_file_path, O_RDONLY, 0);
+    if (IS_ERR(filp)) {
+        printk(KERN_ERR "Failed to open %s: %ld\n", mem_file_path, PTR_ERR(filp));
+        kfree(mem_file_path);
+        return 0;
+    }
+
+    // Leer el uso de memoria
+    ret = kernel_read(filp, buffer, sizeof(buffer) - 1, &pos);
+    if (ret > 0) {
+        buffer[ret] = '\0';
+        if (kstrtoul(buffer, 10, &memory_usage)) {
+            printk(KERN_ERR "Failed to parse memory usage\n");
+            memory_usage = 0;
+        }
+    } else {
+        printk(KERN_ERR "Failed to read memory.current: %ld\n", ret);
+    }
+
+    // Liberar recursos
+    filp_close(filp, NULL);
+    kfree(mem_file_path);
+
+    return memory_usage;
+}
+
+
 // Función para mostrar la información en /proc/sysinfo_202201444
 static int sysinfo_show(struct seq_file *m, void *v) {
     struct sysinfo i;
@@ -91,7 +180,7 @@ static int sysinfo_show(struct seq_file *m, void *v) {
     char container_cmd[256];
 
     si_meminfo(&i);
-    totalram = i.totalram * i.mem_unit / 1024;
+    totalram = i.totalram * i.mem_unit / 1024; // Memoria total en KB
     freeram = i.freeram * i.mem_unit / 1024;
     usedram = totalram - freeram;
 
@@ -122,15 +211,24 @@ static int sysinfo_show(struct seq_file *m, void *v) {
     seq_printf(m, "Procesos en ejecucion:\n");
     int count = 0;
     for_each_process(task) {
-        if (strstr(task->comm, "containerd-shim")) {
-
+        if (strstr(task->comm, "stress")) {
             printk(KERN_INFO "Proceso encontrado: PID=%d, Nombre=%s\n", task->pid, task->comm);
             get_container_cmd(task, container_cmd, sizeof(container_cmd));
             get_container_id(container_cmd, container_id, sizeof(container_id));
 
-            seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s\n",
-                    task->pid, task->comm, container_id, container_cmd);
+            unsigned long memory_bytes;
+            unsigned long memory_kb;
+            unsigned long memory_percentage_100; // Multiplicado por 100 para mantener 2 decimales
+
+            memory_bytes = get_task_memory_usage(task);
+            memory_kb = memory_bytes / 1024; // Convertir de bytes a KB
+            memory_percentage_100 = (memory_kb * 10000) / totalram; // Multiplicamos por 10000 para tener 2 decimales
+
+            seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s, RAM Consumida: %lu.%02lu%%\n",
+                    task->pid, task->comm, container_id, container_cmd,
+                    memory_percentage_100 / 100, memory_percentage_100 % 100);
             if (++count >= 10) break; // Limitar a 10 procesos
+
         }
     }
 
