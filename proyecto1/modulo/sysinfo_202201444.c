@@ -123,12 +123,13 @@ static int sysinfo_show(struct seq_file *m, void *v) {
     int count = 0;
     for_each_process(task) {
         if (strstr(task->comm, "containerd-shim")) {
+
             printk(KERN_INFO "Proceso encontrado: PID=%d, Nombre=%s\n", task->pid, task->comm);
             get_container_cmd(task, container_cmd, sizeof(container_cmd));
             get_container_id(container_cmd, container_id, sizeof(container_id));
 
             seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s\n",
-                       task->pid, task->comm, container_id, container_cmd);
+                    task->pid, task->comm, container_id, container_cmd);
             if (++count >= 10) break; // Limitar a 10 procesos
         }
     }
