@@ -19,9 +19,8 @@
 #include <linux/cpumask.h>
 #include <linux/cpu.h>
 #include <linux/kernel_stat.h>
-#include <linux/uaccess.h> // Para mm_segment_t, get_fs, set_fs
-#include <linux/cgroup.h>  // Para cgroup, task_cgroup, etc.
-#include <linux/fs.h>      // Para filp_open, filp_close, etc.
+#include <linux/cgroup.h>
+#include <linux/blkdev.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Jose Gongora");
@@ -29,14 +28,12 @@ MODULE_DESCRIPTION("Modulo Kernel");
 MODULE_VERSION("1.0");
 
 #define PROC_NAME "sysinfo_202201444"
-#define CONTAINER_ID_LEN 64 // Longitud fija del ID del contenedor
+#define CONTAINER_ID_LEN 64
 
-// Función para obtener el ID del contenedor desde la línea de comando
 static void get_container_id(const char *cmdline, char *container_id, int len) {
-    // Buscar el ID del contenedor (64 caracteres hexadecimales)
     const char *id_start = strstr(cmdline, "-id ");
     if (id_start) {
-        id_start += strlen("-id "); // Avanzar al inicio del ID
+        id_start += strlen("-id ");
         if (strlen(id_start) >= CONTAINER_ID_LEN) {
             snprintf(container_id, len, "%.*s", CONTAINER_ID_LEN, id_start);
             printk(KERN_INFO "ID del contenedor extraído: %s\n", container_id);
@@ -50,7 +47,6 @@ static void get_container_id(const char *cmdline, char *container_id, int len) {
     }
 }
 
-// Función para obtener el comando del contenedor desde la línea de comando
 static void get_container_cmd(struct task_struct *task, char *cmd, int len) {
     struct mm_struct *mm;
     int res = 0;
@@ -61,7 +57,6 @@ static void get_container_cmd(struct task_struct *task, char *cmd, int len) {
             res = access_process_vm(task, mm->arg_start, cmd, mm->arg_end - mm->arg_start, 0);
             if (res > 0) {
                 cmd[res] = '\0';
-                // Reemplazar los caracteres nulos con espacios
                 for (int i = 0; i < res; i++) {
                     if (cmd[i] == '\0') cmd[i] = ' ';
                 }
@@ -113,21 +108,19 @@ static char* get_cgroup_path(struct task_struct *task) {
 
 static unsigned long get_task_memory_usage(struct task_struct *task) {
     char *cgroup_path;
-    char *mem_file_path;  // Cambiamos a un puntero en lugar de un array estático
+    char *mem_file_path;
     struct file *filp = NULL;
-    char buffer[32];  // Esto es pequeño, lo dejamos como está
+    char buffer[32];
     unsigned long memory_usage = 0;
     loff_t pos = 0;
     ssize_t ret;
 
-    // Obtener el cgroup path
     cgroup_path = get_cgroup_path(task);
     if (!cgroup_path) {
         printk(KERN_ERR "Failed to get cgroup path\n");
         return 0;
     }
 
-    // Asignar memoria dinámicamente para mem_file_path
     mem_file_path = kmalloc(PATH_MAX, GFP_KERNEL);
     if (!mem_file_path) {
         kfree(cgroup_path);
@@ -135,11 +128,9 @@ static unsigned long get_task_memory_usage(struct task_struct *task) {
         return 0;
     }
 
-    // Construir el path al archivo memory.current
     snprintf(mem_file_path, PATH_MAX, "%s/memory.current", cgroup_path);
-    kfree(cgroup_path);  // Liberamos cgroup_path ya que no lo necesitamos más
+    kfree(cgroup_path);
 
-    // Abrir el archivo memory.current
     filp = filp_open(mem_file_path, O_RDONLY, 0);
     if (IS_ERR(filp)) {
         printk(KERN_ERR "Failed to open %s: %ld\n", mem_file_path, PTR_ERR(filp));
@@ -147,7 +138,6 @@ static unsigned long get_task_memory_usage(struct task_struct *task) {
         return 0;
     }
 
-    // Leer el uso de memoria
     ret = kernel_read(filp, buffer, sizeof(buffer) - 1, &pos);
     if (ret > 0) {
         buffer[ret] = '\0';
@@ -159,15 +149,65 @@ static unsigned long get_task_memory_usage(struct task_struct *task) {
         printk(KERN_ERR "Failed to read memory.current: %ld\n", ret);
     }
 
-    // Liberar recursos
     filp_close(filp, NULL);
     kfree(mem_file_path);
 
     return memory_usage;
 }
 
+static unsigned long get_task_disk_usage(struct task_struct *task) {
+    char *cgroup_path;
+    char *io_file_path;
+    struct file *filp = NULL;
+    char buffer[256];
+    unsigned long disk_usage = 0;
+    loff_t pos = 0;
+    ssize_t ret;
 
-// Función para mostrar la información en /proc/sysinfo_202201444
+    cgroup_path = get_cgroup_path(task);
+    if (!cgroup_path) {
+        printk(KERN_ERR "Failed to get cgroup path for disk usage\n");
+        return 0;
+    }
+
+    io_file_path = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!io_file_path) {
+        kfree(cgroup_path);
+        printk(KERN_ERR "Failed to allocate memory for io_file_path\n");
+        return 0;
+    }
+
+    snprintf(io_file_path, PATH_MAX, "%s/io.stat", cgroup_path);
+    kfree(cgroup_path);
+
+    filp = filp_open(io_file_path, O_RDONLY, 0);
+    if (IS_ERR(filp)) {
+        printk(KERN_ERR "Failed to open %s: %ld\n", io_file_path, PTR_ERR(filp));
+        kfree(io_file_path);
+        return 0;
+    }
+
+    ret = kernel_read(filp, buffer, sizeof(buffer) - 1, &pos);
+    if (ret > 0) {
+        buffer[ret] = '\0';
+        char *line = buffer;
+        while (line) {
+            unsigned long rbytes = 0, wbytes = 0;
+            sscanf(line, "%*s rbytes=%lu wbytes=%lu", &rbytes, &wbytes);
+            disk_usage += rbytes + wbytes;
+            line = strchr(line, '\n');
+            if (line) line++;
+        }
+    } else {
+        printk(KERN_ERR "Failed to read io.stat: %ld\n", ret);
+    }
+
+    filp_close(filp, NULL);
+    kfree(io_file_path);
+
+    return disk_usage;
+}
+
 static int sysinfo_show(struct seq_file *m, void *v) {
     struct sysinfo i;
     unsigned long totalram, freeram, usedram;
@@ -176,11 +216,11 @@ static int sysinfo_show(struct seq_file *m, void *v) {
     unsigned long cpu_user = 0, cpu_system = 0, cpu_total = 0, idle_time = 0, total_time = 0, cpu_percentage = 0;
     int i_cpu;
     struct task_struct *task;
-    char container_id[CONTAINER_ID_LEN + 1]; // +1 para el carácter nulo
+    char container_id[CONTAINER_ID_LEN + 1];
     char container_cmd[256];
 
     si_meminfo(&i);
-    totalram = i.totalram * i.mem_unit / 1024; // Memoria total en KB
+    totalram = i.totalram * i.mem_unit / 1024;
     freeram = i.freeram * i.mem_unit / 1024;
     usedram = totalram - freeram;
 
@@ -212,35 +252,38 @@ static int sysinfo_show(struct seq_file *m, void *v) {
     int count = 0;
     for_each_process(task) {
         if (strstr(task->comm, "stress")) {
-            printk(KERN_INFO "Proceso encontrado: PID=%d, Nombre=%s\n", task->pid, task->comm);
-            get_container_cmd(task, container_cmd, sizeof(container_cmd));
-            get_container_id(container_cmd, container_id, sizeof(container_id));
+            unsigned long memory_bytes = get_task_memory_usage(task);
+            // Mostrar solo workers (hijos de otro stress)
+            if (memory_bytes > 512 * 1024 && 
+                (task->__state == TASK_RUNNING || task->__state == TASK_INTERRUPTIBLE) && 
+                strstr(task->parent->comm, "stress")) {
+                printk(KERN_INFO "Proceso encontrado: PID=%d, Nombre=%s, Estado=%u, RAM=%lu bytes, Padre=%s (PID=%d)\n", 
+                       task->pid, task->comm, task->__state, memory_bytes, task->parent->comm, task->parent->pid);
+                get_container_cmd(task, container_cmd, sizeof(container_cmd));
+                get_container_id(container_cmd, container_id, sizeof(container_id));
 
-            unsigned long memory_bytes;
-            unsigned long memory_kb;
-            unsigned long memory_percentage_100; // Multiplicado por 100 para mantener 2 decimales
+                unsigned long memory_kb = memory_bytes / 1024;
+                unsigned long memory_percentage_100 = (memory_kb * 10000) / totalram;
 
-            memory_bytes = get_task_memory_usage(task);
-            memory_kb = memory_bytes / 1024; // Convertir de bytes a KB
-            memory_percentage_100 = (memory_kb * 10000) / totalram; // Multiplicamos por 10000 para tener 2 decimales
+                unsigned long disk_bytes = get_task_disk_usage(task);
+                unsigned long disk_mb = disk_bytes / (1024 * 1024);
 
-            seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s, RAM Consumida: %lu.%02lu%%\n",
-                    task->pid, task->comm, container_id, container_cmd,
-                    memory_percentage_100 / 100, memory_percentage_100 % 100);
-            if (++count >= 10) break; // Limitar a 10 procesos
-
+                seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s, RAM Consumida: %lu.%02lu%%, Disco Consumido: %lu MB\n",
+                        task->pid, task->comm, container_id, container_cmd,
+                        memory_percentage_100 / 100, memory_percentage_100 % 100,
+                        disk_mb);
+                if (++count >= 10) break;
+            }
         }
     }
 
     return 0;
 }
 
-// Funcion que se ejecuta al abrir el archivo
-static int sysinfo_open(struct inode *inode, struct file *file){
+static int sysinfo_open(struct inode *inode, struct file *file) {
     return single_open(file, sysinfo_show, NULL);
-};
+}
 
-// Estructura para definir el archivo
 static const struct proc_ops sysinfo_ops = {
     .proc_open = sysinfo_open,
     .proc_read = seq_read,
@@ -249,20 +292,18 @@ static const struct proc_ops sysinfo_ops = {
 };
 
 static int __init init_sysinfo(void) {
-    // Crear el archivo en /proc
     if (!proc_create(PROC_NAME, 0, NULL, &sysinfo_ops)) {
         printk(KERN_ERR "Error al crear el archivo en /proc\n");
         return -ENOMEM;
     }
     printk(KERN_INFO "Modulo cargado correctamente\n");
     return 0;
-};
+}
 
 static void __exit exit_sysinfo(void) {
     remove_proc_entry(PROC_NAME, NULL);
     printk(KERN_INFO "Modulo eliminado correctamente\n");
 }
-
 
 module_init(init_sysinfo);
 module_exit(exit_sysinfo);
