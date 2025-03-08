@@ -32,6 +32,11 @@ struct cpu_usage_data {
     unsigned long prev_time;  // Tiempo previo en microsegundos
 };
 
+struct io_stats {
+    unsigned long rbytes; // Bytes leídos
+    unsigned long wbytes; // Bytes escritos
+};
+
 static struct cpu_usage_data *cpu_data = NULL;
 static int cpu_data_count = 0;
 static DEFINE_SPINLOCK(cpu_data_lock); // Para proteger cpu_data
@@ -263,6 +268,56 @@ static unsigned long get_task_cpu_usage(struct task_struct *task, unsigned long 
     return cpu_percentage; // Ahora en formato 9379 para 93.79%
 }
 
+static struct io_stats get_task_io_stats(struct task_struct *task) {
+    struct io_stats stats = {0, 0};
+    char *cgroup_path = get_cgroup_path(task);
+    char *io_file_path;
+    struct file *filp;
+    char buffer[256];
+    loff_t pos = 0;
+
+    if (!cgroup_path) {
+        printk(KERN_ERR "Failed to get cgroup path for I/O stats\n");
+        return stats;
+    }
+
+    io_file_path = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!io_file_path) {
+        kfree(cgroup_path);
+        printk(KERN_ERR "Failed to allocate memory for io_file_path\n");
+        return stats;
+    }
+
+    snprintf(io_file_path, PATH_MAX, "%s/io.stat", cgroup_path);
+    kfree(cgroup_path);
+
+    filp = filp_open(io_file_path, O_RDONLY, 0);
+    if (IS_ERR(filp)) {
+        printk(KERN_ERR "Failed to open %s: %ld\n", io_file_path, PTR_ERR(filp));
+        kfree(io_file_path);
+        return stats;
+    }
+
+    if (kernel_read(filp, buffer, sizeof(buffer) - 1, &pos) > 0) {
+        buffer[pos] = '\0';
+        char *line = buffer;
+        while (line) {
+            unsigned long rbytes = 0, wbytes = 0;
+            sscanf(line, "%*s rbytes=%lu wbytes=%lu", &rbytes, &wbytes);
+            stats.rbytes += rbytes;
+            stats.wbytes += wbytes;
+            line = strchr(line, '\n');
+            if (line) line++;
+        }
+    } else {
+        printk(KERN_ERR "Failed to read io.stat: %lld\n", pos); // Corregido a %lld
+    }
+
+    filp_close(filp, NULL);
+    kfree(io_file_path);
+    return stats;
+}
+
 static int sysinfo_show(struct seq_file *m, void *v) {
     struct sysinfo i;
     unsigned long totalram, freeram, usedram;
@@ -315,8 +370,10 @@ static int sysinfo_show(struct seq_file *m, void *v) {
             unsigned long memory_kb = memory_bytes / 1024;
             unsigned long memory_percentage_100 = (memory_kb * 10000) / totalram;
 
-            unsigned long disk_bytes = get_task_disk_usage(task);
-            unsigned long disk_mb = disk_bytes / (1024 * 1024);
+            struct io_stats io = get_task_io_stats(task);
+            unsigned long disk_mb = (io.rbytes + io.wbytes) / (1024 * 1024); // Disco Consumido (total)
+            unsigned long rbytes_mb = io.rbytes / (1024 * 1024); // Lectura
+            unsigned long wbytes_mb = io.wbytes / (1024 * 1024); // Escritura
 
             unsigned long cpu_usage = 0;
             int i;
@@ -339,12 +396,11 @@ static int sysinfo_show(struct seq_file *m, void *v) {
                 cpu_data_count++;
             }
 
-            // Formato con 2 decimales: %lu.%02lu
-            seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s, CPU: %lu.%02lu%%, RAM Consumida: %lu.%02lu%%, Disco Consumido: %lu MB\n",
+            seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s, CPU: %lu.%02lu%%, RAM Consumida: %lu.%02lu%%, Disco Consumido: %lu MB, BLOCK I/O: %luMB / %luMB\n",
                     task->pid, task->comm, container_id, container_cmd,
                     cpu_usage / 100, cpu_usage % 100,
                     memory_percentage_100 / 100, memory_percentage_100 % 100,
-                    disk_mb);
+                    disk_mb, rbytes_mb, wbytes_mb);
             if (++count >= 10) break;
         }
     }
