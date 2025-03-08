@@ -6,21 +6,17 @@
 #include <linux/seq_file.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
-#include <linux/timer.h>
 #include <linux/jiffies.h>
 #include <linux/uaccess.h>
-#include <linux/tty.h>
 #include <linux/sched/signal.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/sched/mm.h>
-#include <linux/binfmts.h>
 #include <linux/timekeeping.h>
 #include <linux/cpumask.h>
 #include <linux/cpu.h>
 #include <linux/kernel_stat.h>
 #include <linux/cgroup.h>
-#include <linux/blkdev.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Jose Gongora");
@@ -30,48 +26,44 @@ MODULE_VERSION("1.0");
 #define PROC_NAME "sysinfo_202201444"
 #define CONTAINER_ID_LEN 64
 
+struct cpu_usage_data {
+    pid_t pid;
+    unsigned long prev_usage; // Uso previo en microsegundos
+    unsigned long prev_time;  // Tiempo previo en microsegundos
+};
+
+static struct cpu_usage_data *cpu_data = NULL;
+static int cpu_data_count = 0;
+static DEFINE_SPINLOCK(cpu_data_lock); // Para proteger cpu_data
+
 static void get_container_id(const char *cmdline, char *container_id, int len) {
     const char *id_start = strstr(cmdline, "-id ");
     if (id_start) {
         id_start += strlen("-id ");
-        if (strlen(id_start) >= CONTAINER_ID_LEN) {
-            snprintf(container_id, len, "%.*s", CONTAINER_ID_LEN, id_start);
-            printk(KERN_INFO "ID del contenedor extraído: %s\n", container_id);
-        } else {
-            printk(KERN_ERR "El ID del contenedor no tiene la longitud esperada\n");
-            snprintf(container_id, len, "N/A");
-        }
+        snprintf(container_id, len, "%.*s", min(CONTAINER_ID_LEN, (int)strlen(id_start)), id_start);
     } else {
-        printk(KERN_ERR "No se encontró la cadena '-id' en la línea de comando\n");
         snprintf(container_id, len, "N/A");
     }
 }
 
 static void get_container_cmd(struct task_struct *task, char *cmd, int len) {
-    struct mm_struct *mm;
-    int res = 0;
-
-    mm = get_task_mm(task);
+    struct mm_struct *mm = get_task_mm(task);
     if (mm) {
-        if (mm->arg_end) {
-            res = access_process_vm(task, mm->arg_start, cmd, mm->arg_end - mm->arg_start, 0);
+        if (mm->arg_end > mm->arg_start) {
+            int res = access_process_vm(task, mm->arg_start, cmd, mm->arg_end - mm->arg_start, 0);
             if (res > 0) {
                 cmd[res] = '\0';
                 for (int i = 0; i < res; i++) {
                     if (cmd[i] == '\0') cmd[i] = ' ';
                 }
-                printk(KERN_INFO "Comando del contenedor: %s\n", cmd);
             } else {
-                printk(KERN_ERR "Error al leer la línea de comando del proceso\n");
                 snprintf(cmd, len, "N/A");
             }
         } else {
-            printk(KERN_ERR "No se pudo acceder a la línea de comando del proceso\n");
             snprintf(cmd, len, "N/A");
         }
         mmput(mm);
     } else {
-        printk(KERN_ERR "No se pudo obtener la estructura mm del proceso\n");
         snprintf(cmd, len, "N/A");
     }
 }
@@ -93,9 +85,7 @@ static char* get_cgroup_path(struct task_struct *task) {
         return NULL;
     }
 
-    strncpy(path, "/sys/fs/cgroup", PATH_MAX - 1);
-    path[PATH_MAX - 1] = '\0';
-
+    snprintf(path, PATH_MAX, "/sys/fs/cgroup");
     if (!kernfs_path(cgrp->kn, path + strlen("/sys/fs/cgroup"), PATH_MAX - strlen("/sys/fs/cgroup"))) {
         kfree(path);
         rcu_read_unlock();
@@ -208,6 +198,71 @@ static unsigned long get_task_disk_usage(struct task_struct *task) {
     return disk_usage;
 }
 
+static unsigned long get_task_cpu_usage(struct task_struct *task, unsigned long *prev_usage, unsigned long *prev_time) {
+    char *cgroup_path = get_cgroup_path(task);
+    char *cpu_file_path;
+    struct file *filp;
+    char buffer[256];
+    unsigned long usage_usec = 0;
+    loff_t pos = 0;
+    unsigned long current_time = ktime_to_us(ktime_get());
+
+    if (!cgroup_path) return 0;
+
+    cpu_file_path = kmalloc(PATH_MAX, GFP_KERNEL);
+    if (!cpu_file_path) {
+        kfree(cgroup_path);
+        return 0;
+    }
+
+    snprintf(cpu_file_path, PATH_MAX, "%s/cpu.stat", cgroup_path);
+    kfree(cgroup_path);
+
+    filp = filp_open(cpu_file_path, O_RDONLY, 0);
+    if (IS_ERR(filp)) {
+        printk(KERN_ERR "Failed to open %s: %ld\n", cpu_file_path, PTR_ERR(filp));
+        kfree(cpu_file_path);
+        return 0;
+    }
+
+    if (kernel_read(filp, buffer, sizeof(buffer) - 1, &pos) > 0) {
+        buffer[pos] = '\0';
+        char *line = buffer;
+        while (line) {
+            if (strncmp(line, "usage_usec", 10) == 0) {
+                sscanf(line, "usage_usec %lu", &usage_usec);
+                break;
+            }
+            line = strchr(line, '\n');
+            if (line) line++;
+        }
+    }
+
+    filp_close(filp, NULL);
+    kfree(cpu_file_path);
+
+    if (*prev_time == 0) {
+        *prev_time = current_time;
+        *prev_usage = usage_usec;
+        return 0; // Primera medición
+    }
+
+    unsigned long time_diff = current_time - *prev_time;
+    unsigned long usage_diff = usage_usec - *prev_usage;
+    unsigned long cpu_percentage = 0;
+
+    if (time_diff > 0) {
+        // Multiplicamos por 10000 para mantener 2 decimales (100 = porcentaje, 100 = 2 decimales)
+        cpu_percentage = (usage_diff * 10000) / time_diff;
+        cpu_percentage = min(cpu_percentage, 10000UL * num_online_cpus()); // Límite: 100.00% por CPU
+    }
+
+    *prev_time = current_time;
+    *prev_usage = usage_usec;
+
+    return cpu_percentage; // Ahora en formato 9379 para 93.79%
+}
+
 static int sysinfo_show(struct seq_file *m, void *v) {
     struct sysinfo i;
     unsigned long totalram, freeram, usedram;
@@ -250,32 +305,50 @@ static int sysinfo_show(struct seq_file *m, void *v) {
 
     seq_printf(m, "Procesos en ejecucion:\n");
     int count = 0;
+    spin_lock(&cpu_data_lock);
     for_each_process(task) {
         if (strstr(task->comm, "stress")) {
             unsigned long memory_bytes = get_task_memory_usage(task);
-            // Mostrar solo workers (hijos de otro stress)
-            if (memory_bytes > 512 * 1024 && 
-                (task->__state == TASK_RUNNING || task->__state == TASK_INTERRUPTIBLE) && 
-                strstr(task->parent->comm, "stress")) {
-                printk(KERN_INFO "Proceso encontrado: PID=%d, Nombre=%s, Estado=%u, RAM=%lu bytes, Padre=%s (PID=%d)\n", 
-                       task->pid, task->comm, task->__state, memory_bytes, task->parent->comm, task->parent->pid);
-                get_container_cmd(task, container_cmd, sizeof(container_cmd));
-                get_container_id(container_cmd, container_id, sizeof(container_id));
+            get_container_cmd(task, container_cmd, sizeof(container_cmd));
+            get_container_id(container_cmd, container_id, sizeof(container_id));
 
-                unsigned long memory_kb = memory_bytes / 1024;
-                unsigned long memory_percentage_100 = (memory_kb * 10000) / totalram;
+            unsigned long memory_kb = memory_bytes / 1024;
+            unsigned long memory_percentage_100 = (memory_kb * 10000) / totalram;
 
-                unsigned long disk_bytes = get_task_disk_usage(task);
-                unsigned long disk_mb = disk_bytes / (1024 * 1024);
+            unsigned long disk_bytes = get_task_disk_usage(task);
+            unsigned long disk_mb = disk_bytes / (1024 * 1024);
 
-                seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s, RAM Consumida: %lu.%02lu%%, Disco Consumido: %lu MB\n",
-                        task->pid, task->comm, container_id, container_cmd,
-                        memory_percentage_100 / 100, memory_percentage_100 % 100,
-                        disk_mb);
-                if (++count >= 10) break;
+            unsigned long cpu_usage = 0;
+            int i;
+            for (i = 0; i < cpu_data_count; i++) {
+                if (cpu_data[i].pid == task->pid) {
+                    cpu_usage = get_task_cpu_usage(task, &cpu_data[i].prev_usage, &cpu_data[i].prev_time);
+                    break;
+                }
             }
+            if (i == cpu_data_count && count < 10) {
+                cpu_data = krealloc(cpu_data, (cpu_data_count + 1) * sizeof(struct cpu_usage_data), GFP_ATOMIC);
+                if (!cpu_data) {
+                    spin_unlock(&cpu_data_lock);
+                    return -ENOMEM;
+                }
+                cpu_data[cpu_data_count].pid = task->pid;
+                cpu_data[cpu_data_count].prev_usage = 0;
+                cpu_data[cpu_data_count].prev_time = 0;
+                cpu_usage = get_task_cpu_usage(task, &cpu_data[cpu_data_count].prev_usage, &cpu_data[cpu_data_count].prev_time);
+                cpu_data_count++;
+            }
+
+            // Formato con 2 decimales: %lu.%02lu
+            seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s, CPU: %lu.%02lu%%, RAM Consumida: %lu.%02lu%%, Disco Consumido: %lu MB\n",
+                    task->pid, task->comm, container_id, container_cmd,
+                    cpu_usage / 100, cpu_usage % 100,
+                    memory_percentage_100 / 100, memory_percentage_100 % 100,
+                    disk_mb);
+            if (++count >= 10) break;
         }
     }
+    spin_unlock(&cpu_data_lock);
 
     return 0;
 }
@@ -296,12 +369,23 @@ static int __init init_sysinfo(void) {
         printk(KERN_ERR "Error al crear el archivo en /proc\n");
         return -ENOMEM;
     }
+    cpu_data = kmalloc(sizeof(struct cpu_usage_data), GFP_KERNEL);
+    if (!cpu_data) {
+        remove_proc_entry(PROC_NAME, NULL);
+        return -ENOMEM;
+    }
+    cpu_data_count = 0;
     printk(KERN_INFO "Modulo cargado correctamente\n");
     return 0;
 }
 
 static void __exit exit_sysinfo(void) {
     remove_proc_entry(PROC_NAME, NULL);
+    spin_lock(&cpu_data_lock);
+    kfree(cpu_data);
+    cpu_data = NULL;
+    cpu_data_count = 0;
+    spin_unlock(&cpu_data_lock);
     printk(KERN_INFO "Modulo eliminado correctamente\n");
 }
 
