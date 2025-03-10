@@ -347,6 +347,7 @@ static int sysinfo_show(struct seq_file *m, void *v) {
     struct task_struct *task;
     char container_id[CONTAINER_ID_LEN + 1];
     char container_cmd[256];
+    int count = 0;
 
     si_meminfo(&i);
     totalram = i.totalram * i.mem_unit / 1024;
@@ -372,13 +373,18 @@ static int sysinfo_show(struct seq_file *m, void *v) {
         cpu_percentage = (cpu_total * 100) / total_time;
     }
 
-    seq_printf(m, "Memoria RAM Total: %lu KB (%lu MB, %lu GB)\n", totalram, totalram_mb, totalram_gb);
-    seq_printf(m, "Memoria RAM Libre: %lu KB (%lu MB, %lu GB)\n", freeram, freeram_mb, freeram_gb);
-    seq_printf(m, "Memoria RAM en Uso: %lu KB (%lu MB, %lu GB)\n", usedram, usedram_mb, usedram_gb);
-    seq_printf(m, "Uso de CPU: %lu%%\n", cpu_percentage);
+    seq_printf(m, "{\n");
 
-    seq_printf(m, "Procesos en ejecucion:\n");
-    int count = 0;
+    seq_printf(m, "  \"memory\": {\n");
+    seq_printf(m, "    \"total\": {\"kb\": %lu, \"mb\": %lu, \"gb\": %lu},\n", totalram, totalram_mb, totalram_gb);
+    seq_printf(m, "    \"free\": {\"kb\": %lu, \"mb\": %lu, \"gb\": %lu},\n", freeram, freeram_mb, freeram_gb);
+    seq_printf(m, "    \"used\": {\"kb\": %lu, \"mb\": %lu, \"gb\": %lu}\n", usedram, usedram_mb, usedram_gb);
+    seq_printf(m, "  },\n");
+
+    seq_printf(m, "  \"cpu_usage_percent\": %lu,\n", cpu_percentage);
+
+    seq_printf(m, "  \"processes\": [\n");
+
     spin_lock(&cpu_data_lock);
     for_each_process(task) {
         if (strstr(task->comm, "stress")) {
@@ -390,9 +396,9 @@ static int sysinfo_show(struct seq_file *m, void *v) {
             unsigned long memory_percentage_100 = (memory_kb * 10000) / totalram;
 
             struct io_stats io = get_task_io_stats(task);
-            unsigned long disk_mb = (io.rbytes + io.wbytes) / (1024 * 1024); // Disco Consumido (total)
-            unsigned long rbytes_mb = io.rbytes / (1024 * 1024); // Lectura
-            unsigned long wbytes_mb = io.wbytes / (1024 * 1024); // Escritura
+            unsigned long disk_mb = (io.rbytes + io.wbytes) / (1024 * 1024);
+            unsigned long rbytes_mb = io.rbytes / (1024 * 1024);
+            unsigned long wbytes_mb = io.wbytes / (1024 * 1024);
 
             unsigned long cpu_usage = 0;
             int i;
@@ -406,6 +412,7 @@ static int sysinfo_show(struct seq_file *m, void *v) {
                 cpu_data = krealloc(cpu_data, (cpu_data_count + 1) * sizeof(struct cpu_usage_data), GFP_ATOMIC);
                 if (!cpu_data) {
                     spin_unlock(&cpu_data_lock);
+                    seq_printf(m, "  ]\n}\n");
                     return -ENOMEM;
                 }
                 cpu_data[cpu_data_count].pid = task->pid;
@@ -415,15 +422,42 @@ static int sysinfo_show(struct seq_file *m, void *v) {
                 cpu_data_count++;
             }
 
-            seq_printf(m, "PID: %d, Nombre: %s, ID Contenedor: %s, Comando: %s, CPU: %lu.%02lu%%, RAM Consumida: %lu.%02lu%%, Disco Consumido: %lu MB, BLOCK I/O: %luMB / %luMB\n",
-                    task->pid, task->comm, container_id, container_cmd,
-                    cpu_usage / 100, cpu_usage % 100,
-                    memory_percentage_100 / 100, memory_percentage_100 % 100,
-                    disk_mb, rbytes_mb, wbytes_mb);
+            if (count > 0) {
+                seq_printf(m, ",\n");
+            }
+
+            // Escapar comillas directamente en container_cmd
+            char temp_cmd[256]; // Búfer temporal para la transformación
+            int j, k = 0;
+            for (j = 0; container_cmd[j] && k < sizeof(temp_cmd) - 2; j++) {
+                if (container_cmd[j] == '"') {
+                    temp_cmd[k++] = '\\';
+                    temp_cmd[k++] = '"';
+                } else {
+                    temp_cmd[k++] = container_cmd[j];
+                }
+            }
+            temp_cmd[k] = '\0';
+            strncpy(container_cmd, temp_cmd, sizeof(container_cmd) - 1);
+            container_cmd[sizeof(container_cmd) - 1] = '\0'; // Asegurar terminación
+
+            seq_printf(m, "    {\n");
+            seq_printf(m, "      \"pid\": %d,\n", task->pid);
+            seq_printf(m, "      \"name\": \"%s\",\n", task->comm);
+            seq_printf(m, "      \"container_id\": \"%s\",\n", container_id);
+            seq_printf(m, "      \"command\": \"%s\",\n", container_cmd);
+            seq_printf(m, "      \"cpu_usage_percent\": %lu.%02lu,\n", cpu_usage / 100, cpu_usage % 100);
+            seq_printf(m, "      \"memory_usage_percent\": %lu.%02lu,\n", memory_percentage_100 / 100, memory_percentage_100 % 100);
+            seq_printf(m, "      \"disk_usage_mb\": %lu,\n", disk_mb);
+            seq_printf(m, "      \"block_io\": {\"read_mb\": %lu, \"write_mb\": %lu}\n", rbytes_mb, wbytes_mb);
+            seq_printf(m, "    }");
+
             if (++count >= 10) break;
         }
     }
     spin_unlock(&cpu_data_lock);
+
+    seq_printf(m, "\n  ]\n}\n");
 
     return 0;
 }
