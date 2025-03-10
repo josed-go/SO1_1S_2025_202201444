@@ -345,9 +345,27 @@ static int sysinfo_show(struct seq_file *m, void *v) {
     unsigned long cpu_user = 0, cpu_system = 0, cpu_total = 0, idle_time = 0, total_time = 0, cpu_percentage = 0;
     int i_cpu;
     struct task_struct *task;
-    char container_id[CONTAINER_ID_LEN + 1];
-    char container_cmd[256];
     int count = 0;
+
+    // Asignar memoria dinámica para las variables grandes
+    char (*processed_container_ids)[CONTAINER_ID_LEN + 1] = kmalloc_array(10, CONTAINER_ID_LEN + 1, GFP_KERNEL);
+    if (!processed_container_ids) {
+        return -ENOMEM;
+    }
+    int processed_count = 0;
+
+    char *container_cmd = kmalloc(256, GFP_KERNEL);
+    if (!container_cmd) {
+        kfree(processed_container_ids);
+        return -ENOMEM;
+    }
+
+    char *container_id = kmalloc(CONTAINER_ID_LEN + 1, GFP_KERNEL);
+    if (!container_id) {
+        kfree(container_cmd);
+        kfree(processed_container_ids);
+        return -ENOMEM;
+    }
 
     si_meminfo(&i);
     totalram = i.totalram * i.mem_unit / 1024;
@@ -388,9 +406,18 @@ static int sysinfo_show(struct seq_file *m, void *v) {
     spin_lock(&cpu_data_lock);
     for_each_process(task) {
         if (strstr(task->comm, "stress")) {
+            get_container_id(task, container_id, CONTAINER_ID_LEN + 1);
+
+            // Verificar si este container_id ya fue procesado
+            int i;
+            for (i = 0; i < processed_count; i++) {
+                if (strcmp(processed_container_ids[i], container_id) == 0) {
+                    goto skip_process;
+                }
+            }
+
             unsigned long memory_bytes = get_task_memory_usage(task);
-            get_container_cmd(task, container_cmd, sizeof(container_cmd));
-            get_container_id(task, container_id, sizeof(container_id));
+            get_container_cmd(task, container_cmd, 256);
 
             unsigned long memory_kb = memory_bytes / 1024;
             unsigned long memory_percentage_100 = (memory_kb * 10000) / totalram;
@@ -401,7 +428,6 @@ static int sysinfo_show(struct seq_file *m, void *v) {
             unsigned long wbytes_mb = io.wbytes / (1024 * 1024);
 
             unsigned long cpu_usage = 0;
-            int i;
             for (i = 0; i < cpu_data_count; i++) {
                 if (cpu_data[i].pid == task->pid) {
                     cpu_usage = get_task_cpu_usage(task, &cpu_data[i].prev_usage, &cpu_data[i].prev_time);
@@ -412,6 +438,9 @@ static int sysinfo_show(struct seq_file *m, void *v) {
                 cpu_data = krealloc(cpu_data, (cpu_data_count + 1) * sizeof(struct cpu_usage_data), GFP_ATOMIC);
                 if (!cpu_data) {
                     spin_unlock(&cpu_data_lock);
+                    kfree(container_id);
+                    kfree(container_cmd);
+                    kfree(processed_container_ids);
                     seq_printf(m, "  ]\n}\n");
                     return -ENOMEM;
                 }
@@ -426,8 +455,7 @@ static int sysinfo_show(struct seq_file *m, void *v) {
                 seq_printf(m, ",\n");
             }
 
-            // Escapar comillas directamente en container_cmd
-            char temp_cmd[256]; // Búfer temporal para la transformación
+            char temp_cmd[256]; // Esta sigue siendo local, pero es temporal y pequeña
             int j, k = 0;
             for (j = 0; container_cmd[j] && k < sizeof(temp_cmd) - 2; j++) {
                 if (container_cmd[j] == '"') {
@@ -438,8 +466,8 @@ static int sysinfo_show(struct seq_file *m, void *v) {
                 }
             }
             temp_cmd[k] = '\0';
-            strncpy(container_cmd, temp_cmd, sizeof(container_cmd) - 1);
-            container_cmd[sizeof(container_cmd) - 1] = '\0'; // Asegurar terminación
+            strncpy(container_cmd, temp_cmd, 256 - 1);
+            container_cmd[256 - 1] = '\0';
 
             seq_printf(m, "    {\n");
             seq_printf(m, "      \"pid\": %d,\n", task->pid);
@@ -452,10 +480,22 @@ static int sysinfo_show(struct seq_file *m, void *v) {
             seq_printf(m, "      \"block_io\": {\"read_mb\": %lu, \"write_mb\": %lu}\n", rbytes_mb, wbytes_mb);
             seq_printf(m, "    }");
 
+            // Agregar el container_id a la lista de procesados
+            if (processed_count < 10) {
+                strncpy(processed_container_ids[processed_count++], container_id, CONTAINER_ID_LEN + 1);
+            }
+
             if (++count >= 10) break;
         }
+skip_process:
+        continue;
     }
     spin_unlock(&cpu_data_lock);
+
+    // Liberar la memoria asignada
+    kfree(container_id);
+    kfree(container_cmd);
+    kfree(processed_container_ids);
 
     seq_printf(m, "\n  ]\n}\n");
 
