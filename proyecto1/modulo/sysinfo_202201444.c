@@ -41,16 +41,6 @@ static struct cpu_usage_data *cpu_data = NULL;
 static int cpu_data_count = 0;
 static DEFINE_SPINLOCK(cpu_data_lock); // Para proteger cpu_data
 
-static void get_container_id(const char *cmdline, char *container_id, int len) {
-    const char *id_start = strstr(cmdline, "-id ");
-    if (id_start) {
-        id_start += strlen("-id ");
-        snprintf(container_id, len, "%.*s", min(CONTAINER_ID_LEN, (int)strlen(id_start)), id_start);
-    } else {
-        snprintf(container_id, len, "N/A");
-    }
-}
-
 static void get_container_cmd(struct task_struct *task, char *cmd, int len) {
     struct mm_struct *mm = get_task_mm(task);
     if (mm) {
@@ -99,6 +89,35 @@ static char* get_cgroup_path(struct task_struct *task) {
 
     rcu_read_unlock();
     return path;
+}
+
+static void get_container_id(struct task_struct *task, char *container_id, int len) {
+    char *cgroup_path = get_cgroup_path(task);
+    if (!cgroup_path) {
+        snprintf(container_id, len, "N/A");
+        return;
+    }
+
+    // Buscar el último componente de la ruta del cgroup, que suele ser el ID del contenedor
+    char *id_start = strrchr(cgroup_path, '/');
+    if (id_start && id_start != cgroup_path) {
+        id_start++; // Saltar el '/'
+        // Algunos sistemas prependen un prefijo como "docker-" o "podman-", lo quitamos si existe
+        char *id_real_start = strstr(id_start, "docker-");
+        if (id_real_start) {
+            id_start = id_real_start + strlen("docker-");
+        } else {
+            id_real_start = strstr(id_start, "podman-");
+            if (id_real_start) {
+                id_start = id_real_start + strlen("podman-");
+            }
+        }
+        snprintf(container_id, len, "%.*s", min(CONTAINER_ID_LEN, (int)strlen(id_start)), id_start);
+    } else {
+        snprintf(container_id, len, "N/A");
+    }
+
+    kfree(cgroup_path);
 }
 
 static unsigned long get_task_memory_usage(struct task_struct *task) {
@@ -365,7 +384,7 @@ static int sysinfo_show(struct seq_file *m, void *v) {
         if (strstr(task->comm, "stress")) {
             unsigned long memory_bytes = get_task_memory_usage(task);
             get_container_cmd(task, container_cmd, sizeof(container_cmd));
-            get_container_id(container_cmd, container_id, sizeof(container_id));
+            get_container_id(task, container_id, sizeof(container_id));
 
             unsigned long memory_kb = memory_bytes / 1024;
             unsigned long memory_percentage_100 = (memory_kb * 10000) / totalram;
