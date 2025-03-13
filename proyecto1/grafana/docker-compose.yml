@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"  # Expone el puerto de Grafana
+    volumes:
+      - ./grafana-data:/var/lib/grafana  # Persiste la base de datos de Grafana
+      - ./grafana-plugins:/var/lib/grafana/plugins  # Persiste los plugins
+    environment:
+      - GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=yesoreyeram-infinity-datasource  # Permite el plugin Infinity
+    extra_hosts:
+      - "host.docker.internal:172.17.0.1"  # IP del host en la red Docker, ajusta según tu configuración
