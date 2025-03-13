@@ -1,0 +1,14 @@
+# Ignorar la carpeta de compilación de Rust
+target/
+
+# Ignorar archivos de dependencias de Rust
+Cargo.lock
+
+# Archivos de debug y compilación
+debug/
+release/
+
+# Archivos generados por el IDE (si usas uno)
+.idea/
+.vscode/
+*.iml

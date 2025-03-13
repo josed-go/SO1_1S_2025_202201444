@@ -1,12 +1,13 @@
 use std::fs;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
-use chrono::Utc;
+use chrono::{Utc, DateTime};
 use docker_api::Docker;
 use tokio::time::sleep;
 use reqwest::Client;
 use ctrlc;
 use std::process::Command;
+use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SysInfo {
@@ -29,7 +30,8 @@ struct MemoryUnit {
     gb: u64,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+// Añadir Clone a ProcessInfo
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct ProcessInfo {
     pid: u32,
     name: String,
@@ -41,24 +43,35 @@ struct ProcessInfo {
     block_io: BlockIO,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)] // También añadir Clone a BlockIO porque es parte de ProcessInfo
 struct BlockIO {
     read_mb: u64,
     write_mb: u64,
+}
+
+#[derive(Debug)]
+struct ContainerWithCreation {
+    process: ProcessInfo,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize)]
 struct LogEntry {
     container_name: String,
     container_id: String,
-    category: String,
     created_at: String,
     deleted_at: Option<String>,
-    cpu_usage_percent: f32,          // Nuevo campo
-    memory_usage_percent: f32,       // Nuevo campo
-    disk_usage_mb: u64,              // Nuevo campo
-    block_io_read_mb: u64,           // Nuevo campo (de block_io)
-    block_io_write_mb: u64,          // Nuevo campo (de block_io)
+    cpu_usage_percent: f32,
+    memory_usage_percent: f32,
+    disk_usage_mb: u64,
+    block_io_read_mb: u64,
+    block_io_write_mb: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct CategorizedLogs {
+    #[serde(flatten)]
+    logs: HashMap<String, Vec<LogEntry>>,
 }
 
 #[tokio::main]
@@ -198,78 +211,129 @@ async fn manage_containers(docker: &Docker, client: &Client, log_container_id: &
     let mut io_containers = Vec::new();
     let mut disk_containers = Vec::new();
 
+    // Obtener información de creación de cada contenedor
     for process in &sys_info.processes {
-        if process.command.contains("--vm") {
-            ram_containers.push(process);
-        } else if process.command.contains("--hdd") {
-            disk_containers.push(process);
-        } else if process.command.contains("--io") {
-            io_containers.push(process);
-        } else if process.command.contains("stress") {
-            cpu_containers.push(process);
+        let container = docker.containers().get(&process.container_id);
+        match container.inspect().await {
+            Ok(info) => {
+                let created_at = if let Some(created) = &info.created {
+                    DateTime::parse_from_rfc3339(created)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .unwrap_or(Utc::now())
+                } else {
+                    Utc::now()
+                };
+                let container_with_creation = ContainerWithCreation {
+                    process: process.clone(), // Ahora funciona porque ProcessInfo implementa Clone
+                    created_at,
+                };
+                if process.command.contains("--vm") {
+                    ram_containers.push(container_with_creation);
+                } else if process.command.contains("--hdd") {
+                    disk_containers.push(container_with_creation);
+                } else if process.command.contains("--io") {
+                    io_containers.push(container_with_creation);
+                } else if process.command.contains("stress") {
+                    cpu_containers.push(container_with_creation);
+                }
+            }
+            Err(e) => eprintln!("Error al inspeccionar contenedor {}: {}", process.container_id, e),
         }
     }
 
-    let mut logs = Vec::new();
+    // Mostrar información detallada de cada contenedor en consola
+    println!("\n=== Detalles de Contenedores ===");
+    for container in cpu_containers.iter()
+        .chain(ram_containers.iter())
+        .chain(io_containers.iter())
+        .chain(disk_containers.iter())
+    {
+        println!(
+            "PID: {}, Nombre: {}, Container ID: {}, Creado: {}, Comando: '{}', CPU: {:.2}%, Memoria: {:.2}%, Disco: {} MB, Block I/O (R/W): {}/{} MB",
+            container.process.pid,
+            container.process.name,
+            &container.process.container_id[..12],
+            container.created_at,
+            container.process.command.trim(),
+            container.process.cpu_usage_percent,
+            container.process.memory_usage_percent,
+            container.process.disk_usage_mb,
+            container.process.block_io.read_mb,
+            container.process.block_io.write_mb
+        );
+    }
+
+    let mut categorized_logs = CategorizedLogs {
+        logs: HashMap::new(),
+    };
     let mut deleted_containers = Vec::new();
 
-    manage_category(docker, &mut cpu_containers, "CPU", log_container_id, &mut logs, &mut deleted_containers).await;
-    manage_category(docker, &mut ram_containers, "RAM", log_container_id, &mut logs, &mut deleted_containers).await;
-    manage_category(docker, &mut io_containers, "I/O", log_container_id, &mut logs, &mut deleted_containers).await;
-    manage_category(docker, &mut disk_containers, "Disk", log_container_id, &mut logs, &mut deleted_containers).await;
+    manage_category(docker, &mut cpu_containers, "CPU", log_container_id, &mut categorized_logs, &mut deleted_containers).await;
+    manage_category(docker, &mut ram_containers, "RAM", log_container_id, &mut categorized_logs, &mut deleted_containers).await;
+    manage_category(docker, &mut io_containers, "IO", log_container_id, &mut categorized_logs, &mut deleted_containers).await;
+    manage_category(docker, &mut disk_containers, "Disk", log_container_id, &mut categorized_logs, &mut deleted_containers).await;
 
     println!("\n=== Contenedores por Categoría ===");
-    println!("CPU: {:?}", cpu_containers.iter().map(|c| &c.container_id[..12]).collect::<Vec<_>>());
-    println!("RAM: {:?}", ram_containers.iter().map(|c| &c.container_id[..12]).collect::<Vec<_>>());
-    println!("I/O: {:?}", io_containers.iter().map(|c| &c.container_id[..12]).collect::<Vec<_>>());
-    println!("Disk: {:?}", disk_containers.iter().map(|c| &c.container_id[..12]).collect::<Vec<_>>());
+    println!("CPU: {:?}", cpu_containers.iter().map(|c| &c.process.container_id[..12]).collect::<Vec<_>>());
+    println!("RAM: {:?}", ram_containers.iter().map(|c| &c.process.container_id[..12]).collect::<Vec<_>>());
+    println!("I/O: {:?}", io_containers.iter().map(|c| &c.process.container_id[..12]).collect::<Vec<_>>());
+    println!("Disk: {:?}", disk_containers.iter().map(|c| &c.process.container_id[..12]).collect::<Vec<_>>());
     println!("\nEliminados: {:?}", deleted_containers);
 
-    send_logs_to_container(client, logs).await;
+    send_logs_to_container(client, categorized_logs).await;
 }
 
 async fn manage_category(
     docker: &Docker,
-    containers: &mut Vec<&ProcessInfo>,
+    containers: &mut Vec<ContainerWithCreation>,
     category: &str,
     log_container_id: &str,
-    logs: &mut Vec<LogEntry>,
+    categorized_logs: &mut CategorizedLogs,
     deleted: &mut Vec<String>,
 ) {
     if containers.len() > 1 {
-        containers.sort_by(|a, b| a.container_id.cmp(&b.container_id));
+        // Ordenar por created_at en orden descendente (más reciente primero)
+        containers.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        // Mantener el más reciente (el primero después de ordenar) y eliminar los demás
         while containers.len() > 1 {
-            let old_container = containers.remove(0);
-            if old_container.container_id != log_container_id {
+            let old_container = containers.pop().unwrap(); // Tomar el último (más antiguo)
+            if old_container.process.container_id != log_container_id {
                 let remove_opts = docker_api::opts::ContainerRemoveOpts::builder()
                     .force(true)
                     .build();
-                docker.containers()
-                    .get(&old_container.container_id)
+                match docker.containers()
+                    .get(&old_container.process.container_id)
                     .remove(&remove_opts)
                     .await
-                    .unwrap();
-                logs.push(LogEntry {
-                    container_name: old_container.name.clone(),
-                    container_id: old_container.container_id.clone(),
-                    category: category.to_string(),
-                    created_at: Utc::now().to_string(),
-                    deleted_at: Some(Utc::now().to_string()),
-                    cpu_usage_percent: old_container.cpu_usage_percent,         // Agregar consumo de CPU
-                    memory_usage_percent: old_container.memory_usage_percent,   // Agregar consumo de memoria
-                    disk_usage_mb: old_container.disk_usage_mb,                 // Agregar uso de disco
-                    block_io_read_mb: old_container.block_io.read_mb,           // Agregar lectura de block_io
-                    block_io_write_mb: old_container.block_io.write_mb,         // Agregar escritura de block_io
-                });
-                deleted.push(old_container.container_id[..12].to_string());
+                {
+                    Ok(_) => {
+                        let log_entry = LogEntry {
+                            container_name: old_container.process.name.clone(),
+                            container_id: old_container.process.container_id.clone(),
+                            created_at: old_container.created_at.to_string(),
+                            deleted_at: Some(Utc::now().to_string()),
+                            cpu_usage_percent: old_container.process.cpu_usage_percent,
+                            memory_usage_percent: old_container.process.memory_usage_percent,
+                            disk_usage_mb: old_container.process.disk_usage_mb,
+                            block_io_read_mb: old_container.process.block_io.read_mb,
+                            block_io_write_mb: old_container.process.block_io.write_mb,
+                        };
+                        categorized_logs.logs
+                            .entry(category.to_string())
+                            .or_insert_with(Vec::new)
+                            .push(log_entry);
+                        deleted.push(old_container.process.container_id[..12].to_string());
+                    }
+                    Err(e) => eprintln!("Error al eliminar contenedor {}: {}", old_container.process.container_id, e),
+                }
             }
         }
     }
 }
 
-async fn send_logs_to_container(client: &Client, logs: Vec<LogEntry>) {
+async fn send_logs_to_container(client: &Client, categorized_logs: CategorizedLogs) {
     let url = "http://localhost:8080/logs";
-    if let Err(e) = client.post(url).json(&logs).send().await {
+    if let Err(e) = client.post(url).json(&categorized_logs).send().await {
         eprintln!("Error al enviar logs: {}", e);
     } else {
         println!("Logs enviados correctamente");
