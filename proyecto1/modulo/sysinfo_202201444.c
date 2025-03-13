@@ -481,11 +481,11 @@ static int sysinfo_show(struct seq_file *m, void *v) {
             seq_printf(m, "    }");
 
             // Agregar el container_id a la lista de procesados
-            if (processed_count < 10) {
+            if (processed_count < 15) {
                 strncpy(processed_container_ids[processed_count++], container_id, CONTAINER_ID_LEN + 1);
             }
 
-            if (++count >= 10) break;
+            if (++count >= 15) break;
         }
 skip_process:
         continue;
