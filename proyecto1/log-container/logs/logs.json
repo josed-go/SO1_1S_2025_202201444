@@ -2084,6 +2084,17 @@
       "disk_usage_mb": 763,
       "block_io_read_mb": 0,
       "block_io_write_mb": 763
+    },
+    {
+      "container_name": "stress",
+      "container_id": "ceead28e5a4217cce41a1144362909752b64b9705bd83d88f88457cb9c491dfe",
+      "created_at": "2025-03-13 23:51:02.273398222 UTC",
+      "deleted_at": "2025-03-13 23:51:33.993150610 UTC",
+      "cpu_usage_percent": 23.27,
+      "memory_usage_percent": 0.72,
+      "disk_usage_mb": 586,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 586
     }
   ]
 }
