@@ -23,21 +23,10 @@ spec:
         resources:
           requests:
             cpu: "100m"
-            memory: "256Mi"
-          limits:
-            cpu: "500m"
             memory: "512Mi"
-      - name: go-grpc-client
-        image: 34.132.81.228.nip.io/proyecto2sopes/go-grpc-client:latest
-        ports:
-        - containerPort: 50051
-        resources:
-          requests:
-            cpu: "100m"
-            memory: "256Mi"
           limits:
-            cpu: "500m"
-            memory: "512Mi"
+            cpu: "400m"
+            memory: "1Gi"
 ---
 apiVersion: v1
 kind: Service

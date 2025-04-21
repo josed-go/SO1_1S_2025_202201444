@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-kafka-writer
+  namespace: proyecto2
+  labels:
+    app: go-kafka-writer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go-kafka-writer
+  template:
+    metadata:
+      labels:
+        app: go-kafka-writer
+    spec:
+      containers:
+      - name: go-kafka-writer
+        image: 34.132.81.228.nip.io/proyecto2sopes/go-kafka-writer:latest
+        ports:
+        - containerPort: 50051
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-kafka-writer-service
+  namespace: proyecto2
+spec:
+  ports:
+  - port: 50051
+    targetPort: 50051
+    protocol: TCP
+  selector:
+    app: go-kafka-writer
+  type: ClusterIP

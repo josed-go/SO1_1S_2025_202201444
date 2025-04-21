@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package weather;
+
+option go_package = "./proto";
+
+service WeatherService {
+  rpc PublishWeather(WeatherRequest) returns (WeatherResponse);
+}
+
+message WeatherRequest {
+  string description = 1;
+  string country = 2;
+  string weather = 3;
+}
+
+message WeatherResponse {
+  string message = 1;
+}

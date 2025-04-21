@@ -17,13 +17,13 @@ spec:
     spec:
       containers:
       - name: rust-api
-        image: 34.132.81.228.nip.io/proyecto2/rust-api:latest  # Imagen de Harbor
+        image: 34.132.81.228.nip.io/proyecto2sopes/rust-api:latest  # Imagen de Harbor
         ports:
         - containerPort: 8080  # Puerto donde tu API REST en Rust escucha
         resources:
           requests:
-            cpu: "100m"  # Solicita un mínimo de CPU
+            cpu: "75m"  # Solicita un mínimo de CPU
             memory: "256Mi"
           limits:
-            cpu: "500m"  # Límite de CPU para que HPA funcione bien
+            cpu: "400m"  # Límite de CPU para que HPA funcione bien
             memory: "512Mi"

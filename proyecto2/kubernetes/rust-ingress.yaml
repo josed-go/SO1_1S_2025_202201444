@@ -3,8 +3,6 @@ kind: Ingress
 metadata:
   name: rust-api-ingress
   namespace: proyecto2
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   ingressClassName: nginx
   rules:

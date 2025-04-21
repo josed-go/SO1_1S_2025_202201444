@@ -18,14 +18,21 @@ type WeatherData struct {
 }
 
 func main() {
-	// Connect to gRPC server (this will be the internal gRPC client in the same pod)
-	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// Connect to gRPC server (go-kafka-writer)
+	kafkaConn, err := grpc.Dial("go-kafka-writer-service.proyecto2.svc.cluster.local:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Fatalf("Failed to connect to gRPC server: %v", err)
+		log.Fatalf("Failed to connect to Kafka gRPC server: %v", err)
 	}
-	defer conn.Close()
+	defer kafkaConn.Close()
+	kafkaClient := pb.NewWeatherServiceClient(kafkaConn)
 
-	client := pb.NewWeatherServiceClient(conn)
+	// Connect to gRPC server (go-rabbitmq-writer)
+	rabbitConn, err := grpc.Dial("go-rabbitmq-writer-service.proyecto2.svc.cluster.local:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ gRPC server: %v", err)
+	}
+	defer rabbitConn.Close()
+	rabbitClient := pb.NewWeatherServiceClient(rabbitConn)
 
 	// Start Fiber server for REST API
 	app := fiber.New()
@@ -36,18 +43,28 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Cannot parse JSON"})
 		}
 
-		// Send data to gRPC server
+		// Prepare the gRPC request
 		req := &pb.WeatherRequest{
 			Description: data.Description,
 			Country:     data.Country,
 			Weather:     data.Weather,
 		}
-		res, err := client.PublishWeather(c.Context(), req)
+
+		// Send to go-kafka-writer
+		kafkaRes, err := kafkaClient.PublishWeather(c.Context(), req)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("gRPC error: %v", err)})
+			log.Printf("Failed to send to Kafka gRPC server: %v", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send to Kafka gRPC server"})
 		}
 
-		return c.JSON(fiber.Map{"message": res.Message})
+		// Send to go-rabbitmq-writer
+		rabbitRes, err := rabbitClient.PublishWeather(c.Context(), req)
+		if err != nil {
+			log.Printf("Failed to send to RabbitMQ gRPC server: %v", err)
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send to RabbitMQ gRPC server"})
+		}
+
+		return c.JSON(fiber.Map{"message": fmt.Sprintf("Kafka: %s, RabbitMQ: %s", kafkaRes.Message, rabbitRes.Message)})
 	})
 
 	log.Fatal(app.Listen(":80"))
