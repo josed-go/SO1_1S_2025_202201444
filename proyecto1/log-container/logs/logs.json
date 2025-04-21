@@ -560,6 +560,116 @@
       "disk_usage_mb": 0,
       "block_io_read_mb": 0,
       "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "60a1b14f3d6a8407506a866f236c1f3037c8d6e92a5cbe960bf0b21a4518b06a",
+      "created_at": "2025-03-15 16:49:03.194676609 UTC",
+      "deleted_at": "2025-03-15 16:49:50.452029752 UTC",
+      "cpu_usage_percent": 49.94,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "86fa67f9a71be6e131ba8ca20caf74b047a83709dfb2a5ce6ccdba9ae6594d1e",
+      "created_at": "2025-03-15 16:49:14.626150885 UTC",
+      "deleted_at": "2025-03-15 16:49:51.832755783 UTC",
+      "cpu_usage_percent": 0.0,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "c73a84693c16d7d83948b92b2da6a42f96773aaef3057cb8f37c96dff2f405d4",
+      "created_at": "2025-03-15 16:49:30.471042811 UTC",
+      "deleted_at": "2025-03-15 16:50:19.722389383 UTC",
+      "cpu_usage_percent": 48.75,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "e83332ae2b3052fc86bae91e6e18c4df8bf961a52c3ef9a4de6116b99a27bdb5",
+      "created_at": "2025-03-15 16:49:52.553365095 UTC",
+      "deleted_at": "2025-03-15 16:50:23.098939340 UTC",
+      "cpu_usage_percent": 0.0,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "7c5d8ef94504663886555ff5401070c5e05ab4beae3b2fea454b55341bc581e9",
+      "created_at": "2025-03-15 16:50:04.874339739 UTC",
+      "deleted_at": "2025-03-15 16:50:47.582193471 UTC",
+      "cpu_usage_percent": 48.63,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "8a62d6e226d3b203c96f60e4d927ee591c1941178edd17f8cf6566d4fa9198c9",
+      "created_at": "2025-03-15 16:50:05.719320808 UTC",
+      "deleted_at": "2025-03-15 16:51:00.344329707 UTC",
+      "cpu_usage_percent": 0.0,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "fa05eb57a8a7576a90f60364593f310c126e030ec65d1995872b881ff82309d7",
+      "created_at": "2025-03-15 16:50:09.149373553 UTC",
+      "deleted_at": "2025-03-15 16:51:05.448136292 UTC",
+      "cpu_usage_percent": 0.0,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "be7809f81aeda13393e71dc4057bce2f56be4e1b2b22ce44602c74cfff6955c2",
+      "created_at": "2025-03-15 16:50:23.528202066 UTC",
+      "deleted_at": "2025-03-15 16:51:22.364155960 UTC",
+      "cpu_usage_percent": 49.44,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "6eba3295f02593cc37e49808e8e8c98a44b0bc04a7d71b6b49abdb4177aaabe6",
+      "created_at": "2025-03-15 16:50:36.377558685 UTC",
+      "deleted_at": "2025-03-15 16:51:37.040882717 UTC",
+      "cpu_usage_percent": 0.0,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "9de598f9e17947eb7f8a6d57692dad85c58f0a3429666f068dc49f2018aaf722",
+      "created_at": "2025-03-15 16:51:00.929132146 UTC",
+      "deleted_at": "2025-03-15 16:51:45.442048510 UTC",
+      "cpu_usage_percent": 0.0,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
     }
   ],
   "RAM": [
@@ -1079,6 +1189,17 @@
       "disk_usage_mb": 0,
       "block_io_read_mb": 0,
       "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "3d85f4932802d6d27affb147b8002289a9fea0565d16f0f55a5d52cb07008541",
+      "created_at": "2025-03-15 16:49:07.512544434 UTC",
+      "deleted_at": "2025-03-15 16:50:28.374340249 UTC",
+      "cpu_usage_percent": 84.36,
+      "memory_usage_percent": 0.26,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
     }
   ],
   "IO": [
@@ -1517,6 +1638,28 @@
       "created_at": "2025-03-13 21:17:01.671016769 UTC",
       "deleted_at": "2025-03-13 21:18:20.205218139 UTC",
       "cpu_usage_percent": 0.17,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "5a6e8c325d0ec14e1975978e34f6f7a8afc9a2068f325e5dc106f780a014910a",
+      "created_at": "2025-03-15 16:49:02.314236324 UTC",
+      "deleted_at": "2025-03-15 16:50:34.026459650 UTC",
+      "cpu_usage_percent": 1.31,
+      "memory_usage_percent": 0.0,
+      "disk_usage_mb": 0,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 0
+    },
+    {
+      "container_name": "stress",
+      "container_id": "913bd229e82f6e14d967e255077dab0278e580d8023659f39c01893e15bebfe7",
+      "created_at": "2025-03-15 16:50:03.991399026 UTC",
+      "deleted_at": "2025-03-15 16:51:53.289270208 UTC",
+      "cpu_usage_percent": 0.28,
       "memory_usage_percent": 0.0,
       "disk_usage_mb": 0,
       "block_io_read_mb": 0,
@@ -2095,6 +2238,39 @@
       "disk_usage_mb": 586,
       "block_io_read_mb": 0,
       "block_io_write_mb": 586
+    },
+    {
+      "container_name": "stress",
+      "container_id": "c8e47ce3ff466c777446c46ee9362215f5e981a2927ebcafdfb89b6295ee5a11",
+      "created_at": "2025-03-15 16:49:01.813498291 UTC",
+      "deleted_at": "2025-03-15 16:50:03.524144912 UTC",
+      "cpu_usage_percent": 20.25,
+      "memory_usage_percent": 0.46,
+      "disk_usage_mb": 2175,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 2174
+    },
+    {
+      "container_name": "stress",
+      "container_id": "5992cfb70340a2f90d92b3b77b1dc27c288a6de00e85d25ba8985e7fa5d2449d",
+      "created_at": "2025-03-15 16:49:41.599517171 UTC",
+      "deleted_at": "2025-03-15 16:51:08.240707049 UTC",
+      "cpu_usage_percent": 31.17,
+      "memory_usage_percent": 0.85,
+      "disk_usage_mb": 2383,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 2383
+    },
+    {
+      "container_name": "stress",
+      "container_id": "387a082b65a06ede6ae98a4682c53df09be7a0b38a44084a174692181c8b12c8",
+      "created_at": "2025-03-15 16:50:34.494006258 UTC",
+      "deleted_at": "2025-03-15 16:52:26.036045485 UTC",
+      "cpu_usage_percent": 21.13,
+      "memory_usage_percent": 0.85,
+      "disk_usage_mb": 1588,
+      "block_io_read_mb": 0,
+      "block_io_write_mb": 1588
     }
   ]
 }
