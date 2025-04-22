@@ -1,0 +1,28 @@
+service:
+  type: ClusterIP
+  port: 80
+
+adminUser: admin
+adminPassword: admin
+
+persistence:
+  enabled: true
+  storageClassName: standard  # Asegúrate de que este storageClass exista en tu cluster
+  accessModes:
+    - ReadWriteOnce
+  size: 10Gi
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+    - name: Redis
+      type: redis-datasource
+      access: proxy
+      url: redis-service.proyecto2.svc.cluster.local:6379
+      isDefault: false
+    - name: Valkey
+      type: redis-datasource
+      access: proxy
+      url: valkey-service.proyecto2.svc.cluster.local:6379
+      isDefault: false
